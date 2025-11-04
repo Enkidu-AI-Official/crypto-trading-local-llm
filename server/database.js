@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 const Database = require('better-sqlite3');

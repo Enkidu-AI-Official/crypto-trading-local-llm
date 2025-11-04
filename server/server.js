@@ -1,7 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 const express = require('express');
@@ -49,6 +48,10 @@ function createHmacSha256Signature(data, secret) {
 
 // ============ API ROUTES ============
 
+// Authentication routes (no /v2 prefix)
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes);
+
 /**
  * POST /api/gemini - Forward requests to Google Gemini API
  */
@@ -58,6 +61,13 @@ app.post('/api/gemini', async (req, res) => {
     
     if (!prompt) {
       return res.status(400).json({ error: 'Missing prompt in request body' });
+    }
+    
+    if (!config.geminiApiKey) {
+      return res.status(503).json({ 
+        error: 'Gemini API key not configured',
+        message: 'Please configure GEMINI_API_KEY in server/.env or via /config/providers'
+      });
     }
     
     const response = await axios.post(
@@ -89,6 +99,13 @@ app.post('/api/gemini', async (req, res) => {
  */
 app.post('/api/grok', async (req, res) => {
   try {
+    if (!config.xaiApiKey) {
+      return res.status(503).json({ 
+        error: 'Grok API key not configured',
+        message: 'Please configure XAI_API_KEY in server/.env or via /config/providers'
+      });
+    }
+    
     const response = await axios.post(
       'https://api.x.ai/v1/chat/completions',
       req.body,
@@ -137,8 +154,8 @@ app.get('/api/asterdex/exchangeInfo', async (req, res) => {
  */
 app.get('/api/asterdex', async (req, res) => {
   try {
-    // Use any valid API key for public endpoints
-    const { apiKey } = config.getApiKeysForBot('bot_degen');
+    // Use any valid API key for public endpoints (or default to first available wallet)
+    const { apiKey } = await config.getApiKeysForBot('bot_degen');
     
     const response = await axios.get('https://fapi.asterdex.com/fapi/v1/ticker/24hr', {
       headers: { 'X-MBX-APIKEY': apiKey },
@@ -171,8 +188,8 @@ app.post('/api/aster/trade', async (req, res) => {
       return res.status(400).json({ error: 'Missing method or endpoint in request body' });
     }
     
-    // Get API keys for the specific bot
-    const { apiKey, apiSecret } = config.getApiKeysForBot(botId);
+    // Get API keys for the specific bot (from database or environment)
+    const { apiKey, apiSecret } = await config.getApiKeysForBot(botId);
     
     // Add timestamp to params
     const timestamp = Date.now();
@@ -248,6 +265,20 @@ app.post('/api/state', async (req, res) => {
     res.status(500).json({ error: 'Error updating arena state' });
   }
 });
+
+// ============ NEW API ROUTES (v2.0) ============
+
+// Check if relational schema exists, if so, mount new routes
+const relationalDb = require('./database/relational');
+const apiRoutes = require('./routes');
+
+if (relationalDb.hasRelationalSchema()) {
+  app.use('/api/v2', apiRoutes);
+  console.log('✓ Relational API (v2) routes loaded');
+} else {
+  console.log('⚠️  Relational schema not detected. Run migration to enable v2 API.');
+  console.log('   Run: cd server && node scripts/migrate_to_relational.js');
+}
 
 // ============ STATIC FILE SERVING ============
 

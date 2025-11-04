@@ -1,17 +1,38 @@
 // hooks/useTradingBot.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
+import axios from 'axios';
 import { BotState, Market, Portfolio, AiDecision, AiAction, Position, OrderType, ValueHistoryPoint, Order, BotLog, ArenaState } from '../types';
 import { PAPER_BOT_INITIAL_BALANCE, LIVE_BOT_INITIAL_BALANCE, TURN_INTERVAL_MS, REFRESH_INTERVAL_MS } from '../constants';
 import { getMarketData, executeTrade, getRealAccountState, placeRealOrder, setLeverage, getExchangeInfo, SymbolPrecisionInfo, getRealTradeHistory } from '../services/asterdexService';
 import { getTradingDecision } from '../services/geminiService';
 import { getGrokTradingDecision } from '../services/grokService';
-import { DEGEN_PROMPT, ESCAPED_MONKEY_PROMPT, ASTROLOGER_PROMPT, TIME_TRAVELER_PROMPT } from '../prompts';
 import { getArenaState } from '../services/stateService';
 import { isAppConfigured } from '../config';
 import { leverageLimits } from '../leverageLimits';
 
 const MINIMUM_TRADE_SIZE_USD = 50;
 const SYMBOL_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// Type for API Bot response
+interface ApiBot {
+    id: string;
+    name: string;
+    prompt: string;
+    provider_id: number;
+    provider_name?: string;
+    provider_type?: string;
+    trading_mode: 'paper' | 'real';
+    is_active: boolean;
+    is_paused: boolean;
+}
+
+// Type for API Provider response
+interface ApiProvider {
+    id: number;
+    name: string;
+    provider_type: 'openai' | 'anthropic' | 'gemini' | 'grok' | 'local' | 'custom';
+}
 
 // Helper to create a fresh bot state
 function createNewBot(id: string, name: string, prompt: string, provider: 'gemini' | 'grok', mode: 'paper' | 'real'): BotState {
@@ -46,20 +67,37 @@ function createNewBot(id: string, name: string, prompt: string, provider: 'gemin
     };
 }
 
-// ====================================================================================
-// CRITICAL CONFIGURATION: Bot Definitions
-// The `id` field is the most important part of this configuration.
-// It MUST EXACTLY match the prefix used for the API key environment variables in server/.env.
-// For example, `id: 'bot_degen'` requires environment variables named `DEGEN_LIVE_API_KEY` and `DEGEN_LIVE_SECRET`.
-// This `id` is sent with every trade request to the server, which then selects the
-// correct API keys to use for the trade.
-// ====================================================================================
-const botConfigs: { id: string, name: string, prompt: string, provider: 'gemini' | 'grok', mode: 'paper' | 'real' }[] = [
-    { id: 'bot_degen', name: 'DEGEN LIVE', prompt: DEGEN_PROMPT, provider: 'grok', mode: 'real' },
-    { id: 'bot_monkey', name: 'Escaped Monkey', prompt: ESCAPED_MONKEY_PROMPT, provider: 'gemini', mode: 'real' },
-    { id: 'bot_astrologer', name: 'Astrologer', prompt: ASTROLOGER_PROMPT, provider: 'gemini', mode: 'real' },
-    { id: 'bot_chronospeculator', name: 'The Chronospeculator', prompt: TIME_TRAVELER_PROMPT, provider: 'grok', mode: 'real' },
-];
+// Fetch bots and providers from API
+async function fetchBotConfigs(): Promise<{ id: string, name: string, prompt: string, provider: 'gemini' | 'grok', mode: 'paper' | 'real', isPaused: boolean }[]> {
+    try {
+        const [botsResponse, providersResponse] = await Promise.all([
+            axios.get<ApiBot[]>(`${API_BASE_URL}/api/v2/bots`),
+            axios.get<ApiProvider[]>(`${API_BASE_URL}/api/v2/providers`)
+        ]);
+
+        const providers = new Map(providersResponse.data.map(p => [p.id, p.provider_type]));
+
+        return botsResponse.data
+            .filter(bot => bot.is_active) // Only load active bots
+            .map(bot => {
+                const providerType = providers.get(bot.provider_id);
+                // Default to 'gemini' if provider type is not gemini or grok
+                const provider = (providerType === 'gemini' || providerType === 'grok') ? providerType : 'gemini';
+                
+                return {
+                    id: bot.id,
+                    name: bot.name,
+                    prompt: bot.prompt,
+                    provider,
+                    mode: bot.trading_mode,
+                    isPaused: bot.is_paused
+                };
+            });
+    } catch (error) {
+        console.error('Failed to fetch bot configurations from API:', error);
+        return [];
+    }
+}
 
 const useTradingBots = (isGloballyPaused: boolean) => {
     const [bots, setBots] = useState<BotState[]>([]);
@@ -69,8 +107,8 @@ const useTradingBots = (isGloballyPaused: boolean) => {
     const initialBalanceRef = useRef<Map<string, number>>(new Map());
 
 
-    const turnIntervalRef = useRef<number | null>(null);
-    const refreshIntervalRef = useRef<number | null>(null);
+    const turnIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const botFunctionsRef = useRef({
         updatePortfolios: async () => {},
@@ -79,13 +117,39 @@ const useTradingBots = (isGloballyPaused: boolean) => {
 
     useEffect(() => {
         const initialize = async () => {
-            if (!isAppConfigured) {
-                setIsLoading(false);
-                return;
-            }
-            const precisions = await getExchangeInfo();
-            setSymbolPrecisions(precisions);
-            console.log("Fetched symbol precisions:", precisions);
+            console.log("🚀 Starting bot initialization...");
+            try {
+                if (!isAppConfigured) {
+                    console.log("⚠️ App not configured, skipping initialization");
+                    setIsLoading(false);
+                    return;
+                }
+                
+                // Try to fetch symbol precisions, but don't block if it fails
+                console.log("📊 Fetching exchange info...");
+                try {
+                    const timeout = new Promise<never>((_, reject) => 
+                        setTimeout(() => reject(new Error('getExchangeInfo timeout')), 3000)
+                    );
+                    const precisions = await Promise.race([getExchangeInfo(), timeout]);
+                    setSymbolPrecisions(precisions);
+                    console.log("✅ Fetched symbol precisions:", precisions);
+                } catch (error) {
+                    console.warn("⚠️ Failed to fetch exchange info (exchange API may not be configured):", error);
+                    // Continue initialization even if this fails
+                }
+
+                // Fetch bot configurations from API
+                console.log("🤖 Fetching bot configurations...");
+                const botConfigs = await fetchBotConfigs();
+                console.log("📝 Found", botConfigs.length, "bot configs:", botConfigs);
+                
+                if (botConfigs.length === 0) {
+                    console.warn("⚠️ No active bots found in the database. Please configure bots via the UI.");
+                    setIsLoading(false);
+                    setBots([]);
+                    return;
+                }
 
             const savedState = await getArenaState();
             let initialBots: BotState[];
@@ -93,11 +157,12 @@ const useTradingBots = (isGloballyPaused: boolean) => {
             if (savedState && savedState.bots?.length > 0) {
                 console.log("Resuming from saved state.");
                 initialBots = savedState.bots.map(savedBot => {
-                    const config = botConfigs.find(c => c.id === savedBot.id)!;
+                    const config = botConfigs.find(c => c.id === savedBot.id);
                     if (!config) return null;
                     return {
                         ...savedBot,
                         tradingMode: config.mode,
+                        isPaused: config.isPaused, // Update pause state from database
                         symbolCooldowns: savedBot.symbolCooldowns || {},
                         getDecision: (portfolio: Portfolio, marketData: Market[]) => {
                             if (config.provider === 'grok') return getGrokTradingDecision(portfolio, marketData, config.prompt);
@@ -108,6 +173,11 @@ const useTradingBots = (isGloballyPaused: boolean) => {
             } else {
                 console.log("No saved state found. Starting fresh simulation.");
                 initialBots = botConfigs.map(c => createNewBot(c.id, c.name, c.prompt, c.provider, c.mode));
+                // Set initial pause state from database
+                initialBots = initialBots.map(bot => {
+                    const config = botConfigs.find(c => c.id === bot.id);
+                    return { ...bot, isPaused: config?.isPaused || false };
+                });
             }
 
             // Perform a one-time sync for any live bot to correct its initial state and value history.
@@ -115,8 +185,20 @@ const useTradingBots = (isGloballyPaused: boolean) => {
                 if (bot.tradingMode === 'real') {
                     try {
                         console.log(`[${bot.name}] Performing initial sync with live exchange...`);
-                        const realPortfolio = await getRealAccountState(bot.id);
-                        const realOrders = await getRealTradeHistory(bot.id);
+                        
+                        // Add timeout to prevent hanging if API credentials aren't configured
+                        const timeout = new Promise<never>((_, reject) => 
+                            setTimeout(() => reject(new Error('Exchange sync timeout')), 5000)
+                        );
+                        
+                        const [realPortfolio, realOrders] = await Promise.race([
+                            Promise.all([
+                                getRealAccountState(bot.id),
+                                getRealTradeHistory(bot.id)
+                            ]),
+                            timeout
+                        ]);
+                        
                         const realizedPnl = realOrders.reduce((acc, o) => acc + o.pnl, 0);
 
                         // FIX: Use the hardcoded initial balance for PnL calculations.
@@ -134,7 +216,8 @@ const useTradingBots = (isGloballyPaused: boolean) => {
                             valueHistory: correctedHistory,
                         };
                     } catch (e) {
-                        console.error(`[${bot.name}] Failed initial sync with exchange, will retry on next tick.`, e);
+                        console.warn(`[${bot.name}] Failed initial sync with exchange (credentials may not be configured). Starting with default state.`, e);
+                        initialBalanceRef.current.set(bot.id, LIVE_BOT_INITIAL_BALANCE);
                         return bot;
                     }
                 }
@@ -144,6 +227,13 @@ const useTradingBots = (isGloballyPaused: boolean) => {
 
             setBots(liveCorrectedBots);
             setIsLoading(false);
+            } catch (error) {
+                console.error("Error initializing bots:", error);
+                // Still set loading to false so UI doesn't hang
+                setIsLoading(false);
+                // Set empty bots array
+                setBots([]);
+            }
         };
         initialize();
     }, []);
@@ -377,7 +467,7 @@ const useTradingBots = (isGloballyPaused: boolean) => {
         };
     }, [isGloballyPaused, bots.length, isLoading]);
 
-    const resetBot = (botId: string) => {
+    const resetBot = async (botId: string) => {
         const botToReset = bots.find(b => b.id === botId);
         if (botToReset && botToReset.tradingMode === 'real') {
             alert("Cannot reset a bot that is trading with real funds.");
@@ -385,9 +475,17 @@ const useTradingBots = (isGloballyPaused: boolean) => {
         }
         if (!window.confirm("Are you sure you want to reset this bot?")) return;
         
+        // Fetch the latest bot config from API
+        const botConfigs = await fetchBotConfigs();
+        const config = botConfigs.find(c => c.id === botId);
+        
+        if (!config) {
+            alert("Bot configuration not found in database.");
+            return;
+        }
+
         setBots(prev => prev.map(b => {
             if (b.id === botId) {
-                const config = botConfigs.find(c => c.id === botId)!;
                 initialBalanceRef.current.delete(botId);
                 return createNewBot(config.id, config.name, config.prompt, config.provider, config.mode);
             }

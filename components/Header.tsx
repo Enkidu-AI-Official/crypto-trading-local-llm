@@ -25,10 +25,9 @@ interface HeaderProps {
     onTogglePause: () => void;
     mode: AppMode;
     isBroadcasting: boolean;
-    onOpenSummary: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ isPaused, onTogglePause, mode, isBroadcasting, onOpenSummary }) => {
+const Header: React.FC<HeaderProps> = ({ isPaused, onTogglePause, mode, isBroadcasting }) => {
   return (
     <header className="bg-gray-900/80 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-10">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -49,12 +48,6 @@ const Header: React.FC<HeaderProps> = ({ isPaused, onTogglePause, mode, isBroadc
             </h1>
           </div>
           <div className="flex items-center space-x-4">
-             <button
-                onClick={onOpenSummary}
-                className="px-4 py-2 text-sm font-medium rounded-md text-gray-300 bg-gray-700/50 hover:bg-gray-700/80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 transition-colors"
-             >
-                Project Summary
-            </button>
             {mode === 'broadcast' && isBroadcasting && (
               <>
                 <div className="flex items-center space-x-2">

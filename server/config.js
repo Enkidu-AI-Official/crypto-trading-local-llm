@@ -1,79 +1,108 @@
 /**
  * @license
- * Copyright 2025 Google LLC
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 require('dotenv').config();
 
 /**
  * Configuration validation and loading
+ * 
+ * NOTE: As of Phase 3, this application is fully database-driven.
+ * API keys and credentials are stored encrypted in the database via the UI.
+ * Environment variables are now OPTIONAL and only used as fallbacks or for
+ * initial setup. The application will work without them if configured via UI.
  */
 
-// Required environment variables
-const REQUIRED_VARS = [
+// Optional environment variables (fallbacks for LLM providers if not in database)
+const OPTIONAL_VARS = [
   'GEMINI_API_KEY',
   'XAI_API_KEY',
-  'DEGEN_LIVE_API_KEY',
-  'DEGEN_LIVE_SECRET',
-  'ESCAPED_MONKEY_API_KEY',
-  'ESCAPED_MONKEY_SECRET',
-  'ASTROLOGER_API_KEY',
-  'ASTROLOGER_SECRET'
+  'ENCRYPTION_KEY'  // Recommended for production
 ];
 
 /**
- * Validate that all required environment variables are set
+ * Validate configuration - now only warns about optional variables
+ * The application will function without environment variables if configured via UI
  */
 function validateConfig() {
   const missing = [];
   
-  for (const varName of REQUIRED_VARS) {
+  for (const varName of OPTIONAL_VARS) {
     if (!process.env[varName]) {
       missing.push(varName);
     }
   }
   
   if (missing.length > 0) {
-    console.error('\n❌ ERROR: Missing required environment variables:');
-    console.error(missing.map(v => `  - ${v}`).join('\n'));
-    console.error('\nPlease copy server/.env.example to server/.env and fill in all required values.\n');
-    return false;
+    console.warn('\n⚠️  NOTICE: Some optional environment variables are not set:');
+    console.warn(missing.map(v => `  - ${v}`).join('\n'));
+    console.warn('\nThese can be configured through the UI at /config/providers and /config/credentials');
+    console.warn('Or you can set them in server/.env for convenience.\n');
+  } else {
+    console.log('✅ All optional environment variables are set\n');
   }
   
-  return true;
+  return true; // Always return true - app works without env vars
 }
 
 /**
  * Get API keys for a specific bot
+ * NOW PULLS FROM DATABASE - This function is kept for backward compatibility
+ * but now retrieves encrypted credentials from the database.
+ * 
  * @param {string} botId - The bot identifier (e.g., 'bot_degen')
- * @returns {{apiKey: string, apiSecret: string}}
+ * @returns {Promise<{apiKey: string, apiSecret: string}>}
  */
-function getApiKeysForBot(botId) {
-  let apiKey, apiSecret;
+async function getApiKeysForBot(botId) {
+  const Database = require('better-sqlite3');
+  const { decrypt } = require('./utils/encryption');
+  const path = require('path');
   
-  switch (botId) {
-    case 'bot_degen':
-      apiKey = process.env.DEGEN_LIVE_API_KEY;
-      apiSecret = process.env.DEGEN_LIVE_SECRET;
-      break;
-    case 'bot_monkey':
-      apiKey = process.env.ESCAPED_MONKEY_API_KEY;
-      apiSecret = process.env.ESCAPED_MONKEY_SECRET;
-      break;
-    case 'bot_astrologer':
-      apiKey = process.env.ASTROLOGER_API_KEY;
-      apiSecret = process.env.ASTROLOGER_SECRET;
-      break;
-    default:
-      throw new Error(`No API key configuration found for botId: ${botId}`);
+  const dbPath = path.join(__dirname, '..', 'data', 'arena.db');
+  const db = new Database(dbPath);
+  
+  try {
+    // Get the wallet for this bot (assuming 'asterdex' exchange for now)
+    const wallet = db.prepare(`
+      SELECT api_key_encrypted, api_secret_encrypted 
+      FROM wallets 
+      WHERE bot_id = ? AND is_active = 1
+      LIMIT 1
+    `).get(botId);
+    
+    if (!wallet) {
+      // Fallback to environment variables if no wallet in database
+      console.warn(`No wallet found in database for ${botId}, checking environment variables...`);
+      
+      // Map bot IDs to environment variable prefixes
+      const envPrefixMap = {
+        'bot_degen': 'DEGEN_LIVE',
+        'bot_monkey': 'ESCAPED_MONKEY',
+        'bot_astrologer': 'ASTROLOGER',
+        'bot_chronospeculator': 'CHRONOSPECULATOR'
+      };
+      
+      const prefix = envPrefixMap[botId];
+      if (prefix && process.env[`${prefix}_API_KEY`] && process.env[`${prefix}_SECRET`]) {
+        return {
+          apiKey: process.env[`${prefix}_API_KEY`],
+          apiSecret: process.env[`${prefix}_SECRET`]
+        };
+      }
+      
+      throw new Error(`No API key configuration found for botId: ${botId}. Please configure via /config/credentials`);
+    }
+    
+    // Decrypt the credentials
+    const apiKey = decrypt(wallet.api_key_encrypted);
+    const apiSecret = decrypt(wallet.api_secret_encrypted);
+    
+    return { apiKey, apiSecret };
+    
+  } finally {
+    db.close();
   }
-  
-  if (!apiKey || !apiSecret) {
-    throw new Error(`API Key or Secret is missing for botId: ${botId}`);
-  }
-  
-  return { apiKey, apiSecret };
 }
 
 // Configuration object

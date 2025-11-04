@@ -68,6 +68,40 @@ const Dashboard: React.FC<DashboardProps> = ({ isPaused, onBroadcastingChange })
     );
   }
 
+  if (bots.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-24 w-24 text-gray-600 mb-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <h2 className="text-2xl font-semibold text-white mb-2">No Active Trading Bots</h2>
+        <p className="text-gray-400 mb-6 max-w-md">
+          Get started by configuring your first trading bot. You'll need to set up:
+        </p>
+        <ul className="text-left text-gray-400 mb-6 space-y-2">
+          <li className="flex items-center">
+            <span className="text-indigo-400 mr-2">•</span>
+            AI Provider (Gemini or Grok)
+          </li>
+          <li className="flex items-center">
+            <span className="text-indigo-400 mr-2">•</span>
+            Trading Bot Configuration
+          </li>
+          <li className="flex items-center">
+            <span className="text-indigo-400 mr-2">•</span>
+            Exchange API Credentials (optional for paper trading)
+          </li>
+        </ul>
+        <a 
+          href="/config/bots" 
+          className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
+        >
+          Configure Your First Bot
+        </a>
+      </div>
+    );
+  }
+
   const sortedBots = [...bots].sort((a, b) => b.portfolio.totalValue - a.portfolio.totalValue);
   const liveBot = bots.find(b => b.tradingMode === 'real');
   const chartInitialBalance = liveBot ? initialBalanceRef.current.get(liveBot.id) : PAPER_BOT_INITIAL_BALANCE;
