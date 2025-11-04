@@ -66,16 +66,17 @@ const generateFullPrompt = (portfolio: Portfolio, marketData: Market[], baseProm
     .replace('{{currentDate}}', currentDate) + decisionHistory + cooldownInfo;
 };
 
-export const getTradingDecision = async (portfolio: Portfolio, marketData: Market[], basePrompt: string, recentLogs?: BotLog[], cooldowns?: Record<string, number>, recentOrders?: Order[]): Promise<{ prompt: string, decisions: AiDecision[] }> => {
+export const getTradingDecision = async (portfolio: Portfolio, marketData: Market[], basePrompt: string, recentLogs?: BotLog[], cooldowns?: Record<string, number>, recentOrders?: Order[]): Promise<{ prompt: string, decisions: AiDecision[], error?: string }> => {
   const prompt = generateFullPrompt(portfolio, marketData, basePrompt, recentLogs, cooldowns, recentOrders);
 
   if (!API_URL) {
     console.error("API_URL is not configured in config.ts");
-    return { prompt, decisions: [] };
+    return { prompt, decisions: [], error: 'API_URL not configured' };
   }
   const API_ENDPOINT = `${API_URL}/api/gemini`;
 
   try {
+    console.log(`📤 Gemini API call: Prompt length ${prompt.length} chars`);
     const response = await fetch(API_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -86,22 +87,34 @@ export const getTradingDecision = async (portfolio: Portfolio, marketData: Marke
     const contentType = response.headers.get('content-type');
     if (!response.ok || !contentType || !contentType.includes('application/json')) {
         const errorText = await response.text();
-        throw new Error(`Gemini API error: Expected JSON but received ${contentType}. Status: ${response.status}. Body: ${errorText.substring(0, 200)}`);
+        const errorMsg = `Gemini API error: Status ${response.status}. Body: ${errorText.substring(0, 200)}`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
     }
 
     const responseData = await response.json();
     const decisionText = responseData.text?.trim();
+    console.log(`📥 Gemini response: ${decisionText ? decisionText.length + ' chars' : 'EMPTY'}`);
+    
     if (!decisionText) {
-        return { prompt, decisions: [] };
+        console.warn('⚠️ Gemini returned empty response');
+        return { prompt, decisions: [], error: 'Empty response from Gemini API' };
     }
 
-    const decisions: AiDecision[] = JSON.parse(decisionText);
-    const validDecisions = decisions.filter(d => d.action !== AiAction.HOLD);
-    
-    return { prompt, decisions: validDecisions };
+    try {
+      const decisions: AiDecision[] = JSON.parse(decisionText);
+      const validDecisions = decisions.filter(d => d.action !== AiAction.HOLD);
+      console.log(`✅ Gemini parsed successfully: ${decisions.length} total, ${validDecisions.length} valid`);
+      return { prompt, decisions: validDecisions };
+    } catch (parseError) {
+      console.error('❌ Failed to parse Gemini JSON response:', parseError);
+      console.error('Raw response:', decisionText);
+      return { prompt, decisions: [], error: `JSON parse error: ${parseError instanceof Error ? parseError.message : 'Unknown'}` };
+    }
 
   } catch (error) {
-    console.error("Error getting trading decision from Gemini:", error);
-    return { prompt, decisions: [] };
+    const errorMsg = `Gemini API error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    console.error("❌", errorMsg);
+    return { prompt, decisions: [], error: errorMsg };
   }
 };

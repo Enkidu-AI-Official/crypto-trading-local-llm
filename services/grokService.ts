@@ -69,16 +69,17 @@ const generateFullPrompt = (portfolio: Portfolio, marketData: Market[], baseProm
 };
 
 
-export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: Market[], basePrompt: string, recentLogs?: BotLog[], cooldowns?: Record<string, number>, recentOrders?: Order[]): Promise<{ prompt: string, decisions: AiDecision[] }> => {
+export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: Market[], basePrompt: string, recentLogs?: BotLog[], cooldowns?: Record<string, number>, recentOrders?: Order[]): Promise<{ prompt: string, decisions: AiDecision[], error?: string }> => {
   const prompt = generateFullPrompt(portfolio, marketData, basePrompt, recentLogs, cooldowns, recentOrders);
 
   if (!API_URL) {
     console.error("API_URL is not configured in config.ts");
-    return { prompt, decisions: [] };
+    return { prompt, decisions: [], error: 'API_URL not configured' };
   }
   const API_ENDPOINT = `${API_URL}/api/grok`;
 
   try {
+    console.log(`📤 Grok API call: Prompt length ${prompt.length} chars`);
     const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -94,15 +95,18 @@ export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: M
     const contentType = response.headers.get('content-type');
     if (!response.ok || !contentType || !contentType.includes('application/json')) {
         const errorText = await response.text();
-        throw new Error(`Grok API error: Expected JSON but received ${contentType}. Status: ${response.status}. Body: ${errorText.substring(0, 200)}`);
+        const errorMsg = `Grok API error: Status ${response.status}. Body: ${errorText.substring(0, 200)}`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
     }
       
     const responseData = await response.json();
     const decisionText = responseData.choices?.[0]?.message?.content;
+    console.log(`📥 Grok response: ${decisionText ? decisionText.length + ' chars' : 'EMPTY'}`);
     
     if (!decisionText) {
-      console.warn("Grok response was successful but contained no content.");
-      return { prompt, decisions: [] };
+      console.warn("⚠️ Grok response was successful but contained no content.");
+      return { prompt, decisions: [], error: 'Empty response from Grok API' };
     }
 
     const match = decisionText.match(/(\[[\s\S]*\])/);
@@ -112,21 +116,23 @@ export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: M
         const jsonString = match[0];
         const decisions: AiDecision[] = JSON.parse(jsonString);
         const validDecisions = decisions.filter(d => d.action !== AiAction.HOLD);
+        console.log(`✅ Grok parsed successfully: ${decisions.length} total, ${validDecisions.length} valid`);
         return { prompt, decisions: validDecisions };
       } catch (e) {
-        console.error("Error parsing JSON from Grok, even after extraction:", e);
-        console.error("Extracted string that failed to parse:", match[0]);
-        console.error("Original response from Grok:", decisionText);
-        return { prompt, decisions: [] };
+        console.error("❌ Error parsing JSON from Grok, even after extraction:", e);
+        console.error("Extracted string that failed to parse:", match[0].substring(0, 200));
+        console.error("Original response from Grok:", decisionText.substring(0, 500));
+        return { prompt, decisions: [], error: `JSON parse error: ${e instanceof Error ? e.message : 'Unknown'}` };
       }
     } else {
-      console.warn("No JSON array found in Grok's response.");
-      console.warn("Original response from Grok:", decisionText);
-      return { prompt, decisions: [] };
+      console.warn("⚠️ No JSON array found in Grok's response.");
+      console.warn("Response preview:", decisionText.substring(0, 500));
+      return { prompt, decisions: [], error: 'No JSON array found in Grok response' };
     }
 
   } catch (error) {
-    console.error("Error getting trading decision from Grok:", error);
-    return { prompt, decisions: [] };
+    const errorMsg = `Grok API error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    console.error("❌", errorMsg);
+    return { prompt, decisions: [], error: errorMsg };
   }
 };

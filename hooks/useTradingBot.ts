@@ -328,9 +328,20 @@ const useTradingBots = (isGloballyPaused: boolean) => {
                 setBots(current => current.map(b => b.id === bot.id ? { ...b, isLoading: true } : b));
                 
                 // Pass recent decision history and cooldowns to the bot so it has context
-                const { prompt, decisions } = await bot.getDecision(bot.portfolio, activeMarkets, bot.botLogs.slice(0, 5), bot.symbolCooldowns, bot.orders.slice(0, 10));
+                console.log(`   🧠 Requesting decision from ${bot.provider.toUpperCase()} for ${bot.name}...`);
+                const decisionStart = Date.now();
+                const { prompt, decisions, error } = await bot.getDecision(bot.portfolio, activeMarkets, bot.botLogs.slice(0, 5), bot.symbolCooldowns, bot.orders.slice(0, 10));
+                const decisionTime = Date.now() - decisionStart;
+                console.log(`   ⏱️ Decision received in ${decisionTime}ms, prompt length: ${prompt.length} chars`);
                 
                 const notes: string[] = [];
+                
+                // Add error to notes if API call failed
+                if (error) {
+                    console.error(`   ❌ API Error for ${bot.name}: ${error}`);
+                    notes.push(`⚠️ API ERROR: ${error}`);
+                }
+                
                 const validatedDecisions: { decision: AiDecision, adjustedLeverage: number }[] = [];
 
                 console.log(`   📋 Processing ${decisions.length} decisions for ${bot.name}`);
