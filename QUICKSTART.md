@@ -38,10 +38,21 @@ http://localhost:5173
 
 You'll see a modern dashboard with navigation for:
 - **Dashboard** - Live trading view
+- **Analytics** - Performance metrics and historical analysis
 - **Bots** - Manage your trading bots
 - **AI Providers** - Configure AI models
 - **API Keys** - Manage exchange credentials
 - **Settings** - Global configuration
+
+### Step 3: Login
+
+Default credentials:
+```
+Username: admin
+Password: admin123
+```
+
+⚠️ **IMPORTANT**: Change this password immediately after first login!
 
 ---
 
@@ -136,6 +147,22 @@ Navigate to **Settings** to configure:
 The main dashboard shows:
 - Live market data
 - Active bot positions
+
+### Analytics Dashboard 
+
+Navigate to **Analytics** to see:
+- **Performance Overview** - Total P&L, win rate, Sharpe ratio
+- **Bot Comparison** - Side-by-side performance charts
+- **Trade Distribution** - Visual breakdown by bot
+- **Time Range Filters** - View 24h, 7d, 30d, or all time
+
+Click on any bot card to view detailed analytics:
+- Portfolio value over time
+- Drawdown chart
+- Full trade history
+- Win/loss distribution
+- Best/worst trades
+- Risk metrics
 - Real-time PnL tracking
 - Recent trades and decisions
 
