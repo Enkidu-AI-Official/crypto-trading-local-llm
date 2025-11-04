@@ -1,5 +1,5 @@
 import { Portfolio, Market, AiDecision, AiAction } from "../types";
-import { PROXY_URL } from "../config";
+import { API_URL } from "../config";
 
 const MODEL = 'grok-3-mini-beta';
 
@@ -21,11 +21,11 @@ const generateFullPrompt = (portfolio: Portfolio, marketData: Market[], baseProm
 export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: Market[], basePrompt: string): Promise<{ prompt: string, decisions: AiDecision[] }> => {
   const prompt = generateFullPrompt(portfolio, marketData, basePrompt);
 
-  if (!PROXY_URL) {
-    console.error("PROXY_URL is not configured in config.ts");
+  if (!API_URL) {
+    console.error("API_URL is not configured in config.ts");
     return { prompt, decisions: [] };
   }
-  const API_ENDPOINT = `${PROXY_URL}/grok`;
+  const API_ENDPOINT = `${API_URL}/api/grok`;
 
   try {
     const response = await fetch(API_ENDPOINT, {
@@ -43,7 +43,7 @@ export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: M
     const contentType = response.headers.get('content-type');
     if (!response.ok || !contentType || !contentType.includes('application/json')) {
         const errorText = await response.text();
-        throw new Error(`Grok proxy error: Expected JSON but received ${contentType}. Status: ${response.status}. Body: ${errorText.substring(0, 200)}`);
+        throw new Error(`Grok API error: Expected JSON but received ${contentType}. Status: ${response.status}. Body: ${errorText.substring(0, 200)}`);
     }
       
     const responseData = await response.json();
@@ -75,7 +75,7 @@ export const getGrokTradingDecision = async (portfolio: Portfolio, marketData: M
     }
 
   } catch (error) {
-    console.error("Error getting trading decision from Grok via proxy:", error);
+    console.error("Error getting trading decision from Grok:", error);
     return { prompt, decisions: [] };
   }
 };
